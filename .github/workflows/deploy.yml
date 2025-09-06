@@ -55,7 +55,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          source: "k8s/*"
+          source: "k3s/*"
           target: "/opt/${{ secrets.VPS_USER }}/tailfront/"
 
       - name: Apply k8s manifests and rollout new image
