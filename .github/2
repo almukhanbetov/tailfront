@@ -62,7 +62,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          source: "k3s/*"
+          source: "k8s/*"
           target: "/opt/${{ secrets.VPS_USER }}/tailfront"  # без завершающего /
           overwrite: true
           debug: true
