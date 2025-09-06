@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: tailfront
+  namespace: web
+spec:
+  selector:
+    app: tailfront
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+  type: ClusterIP

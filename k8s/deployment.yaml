@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tailfront
+  namespace: web
+  labels:
+    app: tailfront
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tailfront
+  template:
+    metadata:
+      labels:
+        app: tailfront
+    spec:
+      containers:
+        - name: tailfront-container
+          image: almuko/tailfront:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "300m"
+              memory: "128Mi"
