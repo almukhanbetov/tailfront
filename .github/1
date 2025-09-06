@@ -1,0 +1,66 @@
+name: Deploy React App to K3s
+on:
+  push:
+    branches:
+      - main
+env:
+  IMAGE_NAME: almuko/tailfront  # 👈 Укажи свой dockerhub репозиторий
+jobs:
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+      - name: Build and Push Image to Docker Hub
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE_NAME }}:latest
+  deploy:
+    name: Deploy to k3s on VPS
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      - name: Checkout repo again
+        uses: actions/checkout@v3
+      - name: Copy k3s manifests to VPS and deploy
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            DEPLOY_DIR=~/tailfront           
+            mkdir -p $DEPLOY_DIR          
+            rm -rf $DEPLOY_DIR/*           
+            echo "Ready to copy files."
+
+      - name: SCP k3s manifests to VPS
+        uses: appleboy/scp-action@v0.1.6
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY}}
+          source: "k3s/*"
+          target: "~/tailfront/"
+      - name: Apply k3s manifests on VPS
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER}}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd ~/tailfront/k3s
+            # Подменяем образ внутри deployment.yaml
+            sed -i 's|image:.*|image: '"${{ env.IMAGE_NAME }}:latest"'|' deployment.yaml           
+            kubectl apply -f .
+            echo "Deployment complete."

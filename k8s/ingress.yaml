@@ -7,7 +7,7 @@ metadata:
     kubernetes.io/ingress.class: "nginx"
 spec:
   rules:
-    - host: tailfront.37.140.243.250.nip.io
+    - host: tailfront.uibirzhasi.kz
       http:
         paths:
           - path: /
