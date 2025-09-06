@@ -2,7 +2,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: tailfront
-  namespace: web
   labels:
     app: tailfront
 spec:
@@ -17,14 +16,25 @@ spec:
     spec:
       containers:
         - name: tailfront-container
-          image: almuko/tailfront:latest
-          imagePullPolicy: Always
+          image: almuko/tailfront:latest # 👈 заменишь на свой dockerhub
           ports:
             - containerPort: 80
           resources:
             requests:
-              cpu: "50m"
-              memory: "64Mi"
-            limits:
-              cpu: "300m"
+              cpu: "100m"
               memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10

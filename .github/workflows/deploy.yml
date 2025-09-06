@@ -1,86 +1,71 @@
-name: CI/CD tailfront
-
+name: Deploy React App to K3s
 on:
   push:
-    branches: [ "main" ]
-
+    branches:
+      - main
 env:
-  IMAGE_NAME: ${{ vars.DOCKER_IMAGE_NAME || 'tailfront' }}   # имя репозитория в Docker Hub (без логина)
-  K8S_NAMESPACE: web
-
+  IMAGE_NAME: almuko/tailfront  # 👈 Укажи свой dockerhub репозиторий
 jobs:
   build-and-push:
+    name: Build and Push Docker Image
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
 
-      - name: Build and push (latest + sha)
-        uses: docker/build-push-action@v6
+      - name: Build and Push Image to Docker Hub
+        uses: docker/build-push-action@v4
         with:
           context: .
           push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-
+          tags: ${{ env.IMAGE_NAME }}:latest
   deploy:
+    name: Deploy to k3s on VPS
     runs-on: ubuntu-latest
     needs: build-and-push
     steps:
-      - name: Checkout (for k8s dir)
-        uses: actions/checkout@v4
+      - name: Checkout repo again
+        uses: actions/checkout@v3
 
-      - name: Prepare archive with manifests
-        run: |
-          tar -czf /tmp/k8s.tgz -C k8s .
+      - name: Copy k3s manifests to VPS and deploy
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            DEPLOY_DIR=~/tailfront            
+            mkdir -p $DEPLOY_DIR          
+            rm -rf $DEPLOY_DIR/*           
+            echo "Ready to copy files."
 
-      - name: Write SSH key
-        run: |
-          echo "${{ secrets.VPS_SSH_KEY }}" > /tmp/id_vps
-          chmod 600 /tmp/id_vps
+      - name: SCP k3s manifests to VPS
+        uses: appleboy/scp-action@v0.1.6
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: "k3s/*"
+          target: "~/tailfront/"
 
-      - name: Ensure prereqs and target dir on VPS
-        run: |
-          ssh -i /tmp/id_vps -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-            "set -e;
-             if ! command -v tar >/dev/null 2>&1; then
-               sudo apt-get update && sudo apt-get install -y tar
-             fi;
-             sudo mkdir -p /opt/${{ secrets.VPS_USER }}/tailfront;
-             sudo chown -R $USER:$USER /opt/${{ secrets.VPS_USER }}/tailfront"
-      
-      - name: Copy manifests archive via scp
-        run: |
-          scp -i /tmp/id_vps -o StrictHostKeyChecking=no /tmp/k8s.tgz \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/${{ secrets.VPS_USER }}/tailfront/k8s.tgz
-
-      - name: Apply k8s manifests and rollout new image
-        run: |
-          ssh -i /tmp/id_vps -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-            "set -e;
-             cd /opt/${{ secrets.VPS_USER }}/tailfront;
-             tar -xzf k8s.tgz;
-             ls -la;
-             NAMESPACE='${{ env.K8S_NAMESPACE }}';
-             IMAGE_REPO='${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}';
-             SHA='${{ github.sha }}';
-
-             kubectl get ns \"${NAMESPACE}\" >/dev/null 2>&1 || kubectl create namespace \"${NAMESPACE}\";
-             kubectl apply -f namespace.yaml || true;
-             kubectl -n \"${NAMESPACE}\" apply -f deployment.yaml;
-             kubectl -n \"${NAMESPACE}\" apply -f service.yaml;
-             kubectl -n \"${NAMESPACE}\" apply -f ingress.yaml;
-
-             kubectl -n \"${NAMESPACE}\" set image deploy/tailfront tailfront-container=\"${IMAGE_REPO}:${SHA}\";
-             kubectl -n \"${NAMESPACE}\" rollout status deploy/tailfront;
-             kubectl -n \"${NAMESPACE}\" get deploy,po,svc,ing -o wide"
+      - name: Apply k3s manifests on VPS
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd ~/tailfront/k3s
+            # Подменяем образ внутри deployment.yaml
+            sed -i 's|image:.*|image: '"${{ env.IMAGE_NAME }}:latest"'|' deployment.yaml           
+            kubectl apply -f .
+            echo "Deployment complete."

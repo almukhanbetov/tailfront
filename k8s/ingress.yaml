@@ -2,9 +2,11 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: tailfront
-  namespace: web
+  # ЛЮБОЙ из вариантов:
   annotations:
-    kubernetes.io/ingress.class: "nginx"
+    kubernetes.io/ingress.class: traefik
+  # ИЛИ вместо аннотации:
+  # ingressClassName: traefik
 spec:
   rules:
     - host: tailfront.uibirzhasi.kz
