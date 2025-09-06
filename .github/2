@@ -1,13 +1,11 @@
-name: CI/CD Tailfront
+name: CI/CD tailfront
 
 on:
   push:
     branches: [ "main" ]
 
 env:
-  # Имя репозитория образа в Docker Hub (без логина и тега).
-  IMAGE_NAME: ${{ vars.DOCKER_IMAGE_NAME || 'tailfront' }}
-  # Namespace в кластере k3s
+  IMAGE_NAME: ${{ vars.DOCKER_IMAGE_NAME || 'tailfront' }}   # имя репозитория в Docker Hub (без логина)
   K8S_NAMESPACE: web
 
 jobs:
@@ -39,61 +37,50 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-and-push
     steps:
-      - name: Ensure prereqs and target dir under /opt
-        # Устанавливаем tar (если нет), создаём каталог и права
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            set -e
-            if ! command -v tar >/dev/null 2>&1; then
-              sudo apt-get update
-              sudo apt-get install -y tar
-            fi
-            sudo mkdir -p /opt/${{ secrets.VPS_USER }}/tailfront
-            sudo chown -R ${{ secrets.VPS_USER }}:${{ secrets.VPS_USER }} /opt/${{ secrets.VPS_USER }}/tailfront
-            ls -ld /opt/${{ secrets.VPS_USER }} /opt/${{ secrets.VPS_USER }}/tailfront
+      - name: Checkout (for k8s dir)
+        uses: actions/checkout@v4
 
-      - name: Copy k8s manifests to VPS
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          source: "k8s/*"
-          target: "/opt/${{ secrets.VPS_USER }}/tailfront"  # без завершающего /
-          overwrite: true
-          debug: true
+      - name: Prepare archive with manifests
+        run: |
+          tar -czf /tmp/k8s.tgz -C k8s .
+
+      - name: Write SSH key
+        run: |
+          echo "${{ secrets.VPS_SSH_KEY }}" > /tmp/id_vps
+          chmod 600 /tmp/id_vps
+
+      - name: Ensure prereqs and target dir on VPS
+        run: |
+          ssh -i /tmp/id_vps -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "set -e;
+             if ! command -v tar >/dev/null 2>&1; then
+               sudo apt-get update && sudo apt-get install -y tar
+             fi;
+             sudo mkdir -p /opt/${{ secrets.VPS_USER }}/tailfront;
+             sudo chown -R $USER:$USER /opt/${{ secrets.VPS_USER }}/tailfront"
+      
+      - name: Copy manifests archive via scp
+        run: |
+          scp -i /tmp/id_vps -o StrictHostKeyChecking=no /tmp/k8s.tgz \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/${{ secrets.VPS_USER }}/tailfront/k8s.tgz
 
       - name: Apply k8s manifests and rollout new image
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            set -e
-            cd /opt/${{ secrets.VPS_USER }}/tailfront
-            ls -la  # убедимся, что файлы приехали
+        run: |
+          ssh -i /tmp/id_vps -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "set -e;
+             cd /opt/${{ secrets.VPS_USER }}/tailfront;
+             tar -xzf k8s.tgz;
+             ls -la;
+             NAMESPACE='${{ env.K8S_NAMESPACE }}';
+             IMAGE_REPO='${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}';
+             SHA='${{ github.sha }}';
 
-            NAMESPACE="${{ env.K8S_NAMESPACE }}"
-            IMAGE_REPO="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}"
-            SHA="${{ github.sha }}"
+             kubectl get ns \"${NAMESPACE}\" >/dev/null 2>&1 || kubectl create namespace \"${NAMESPACE}\";
+             kubectl apply -f namespace.yaml || true;
+             kubectl -n \"${NAMESPACE}\" apply -f deployment.yaml;
+             kubectl -n \"${NAMESPACE}\" apply -f service.yaml;
+             kubectl -n \"${NAMESPACE}\" apply -f ingress.yaml;
 
-            # создать ns, если отсутствует
-            kubectl get ns "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
-
-            # применяем манифесты (namespace.yaml можно без -n)
-            kubectl apply -f namespace.yaml || true
-            kubectl -n "$NAMESPACE" apply -f deployment.yaml
-            kubectl -n "$NAMESPACE" apply -f service.yaml
-            kubectl -n "$NAMESPACE" apply -f ingress.yaml
-
-            # обновляем образ на тег коммита и ждём раскатку
-            kubectl -n "$NAMESPACE" set image deploy/tailfront tailfront-container="${IMAGE_REPO}:${SHA}"
-            kubectl -n "$NAMESPACE" rollout status deploy/tailfront
-
-            # быстрая проверка
-            kubectl -n "$NAMESPACE" get deploy,po,svc,ing -o wide
+             kubectl -n \"${NAMESPACE}\" set image deploy/tailfront tailfront-container=\"${IMAGE_REPO}:${SHA}\";
+             kubectl -n \"${NAMESPACE}\" rollout status deploy/tailfront;
+             kubectl -n \"${NAMESPACE}\" get deploy,po,svc,ing -o wide"
