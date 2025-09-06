@@ -1,66 +1,66 @@
-name: CI/CD Tailfront
+name: Deploy React App to K3s
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
 env:
-  IMAGE_NAME: ${{ vars.DOCKER_IMAGE_NAME || 'tailfront' }}
-  DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+  IMAGE_NAME: almuko/tailfront  # 👈 Укажи свой dockerhub репозиторий
 jobs:
   build-and-push:
+    name: Build and Push Docker Image
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
-
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
-      - name: Debug tag
-        run: |
-            echo "TAG1=${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest"
-            echo "TAG2=${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"    
-      - name: Build and push (latest + sha)
-        uses: docker/build-push-action@v6
+      - name: Build and Push Image to Docker Hub
+        uses: docker/build-push-action@v4
         with:
           context: .
           push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-
+          tags: ${{ env.IMAGE_NAME }}:latest
   deploy:
+    name: Deploy to k3s on VPS
     runs-on: ubuntu-latest
     needs: build-and-push
     steps:
-      - name: Copy manifests to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.VPS_HOST }}        # 37.140.243.250
-          username: ${{ secrets.VPS_USER }}    # например: ubuntu
-          key: ${{ secrets.VPS_SSH_KEY }}      # приватный ключ
-          source: "k8s/*"
-          target: "~/tailfront/"
-
-      - name: Apply manifests + set image
-        uses: appleboy/ssh-action@v1.2.0
+      - name: Checkout repo again
+        uses: actions/checkout@v3
+      - name: Copy k3s manifests to VPS and deploy
+        uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            cd ~/tailfront
-            # подставим твой образ в deployment (если нужно) и применим
-            sed -i "s|almuko/tailfront:latest|${{ secrets.DOCKERHUB_USERNAME }}/${{ vars.IMAGE_NAME }}:latest|g" deployment.yaml
-            kubectl apply -f namespace.yaml
-            kubectl apply -f deployment.yaml
-            kubectl apply -f service.yaml
-            kubectl apply -f ingress.yaml
+            DEPLOY_DIR=~/tailfront           
+            mkdir -p $DEPLOY_DIR          
+            rm -rf $DEPLOY_DIR/*           
+            echo "Ready to copy files."
 
-            # перекатываем на свежий образ (sha-тег) без редактирования манифеста
-            kubectl -n web set image deploy/tailfront tailfront-container=${{ secrets.DOCKERHUB_USERNAME }}/${{ vars.IMAGE_NAME }}:${{ github.sha }}
-            kubectl -n web rollout status deploy/tailfront
+      - name: SCP k3s manifests to VPS
+        uses: appleboy/scp-action@v0.1.6
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY}}
+          source: "k3s/*"
+          target: "~/tailfront/"
+      - name: Apply k3s manifests on VPS
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER}}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd ~/tailfront/k3s
+            # Подменяем образ внутри deployment.yaml
+            sed -i 's|image:.*|image: '"${{ env.IMAGE_NAME }}:latest"'|' deployment.yaml           
+            kubectl apply -f .
+            echo "Deployment complete."
