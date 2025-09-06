@@ -1,13 +1,10 @@
 name: CI/CD Tailfront
-
 on:
   push:
     branches: [ "main" ]
-
 env:
   IMAGE_NAME: ${{ vars.DOCKER_IMAGE_NAME || 'tailfront' }}
   DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
-
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
@@ -23,15 +20,18 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
-
+      - name: Debug tag
+        run: |
+            echo "TAG1=${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest"
+            echo "TAG2=${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"    
       - name: Build and push (latest + sha)
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ vars.IMAGE_NAME }}:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ vars.IMAGE_NAME }}:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
   deploy:
     runs-on: ubuntu-latest
